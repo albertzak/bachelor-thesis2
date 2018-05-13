@@ -1,7 +1,9 @@
 \section{Introduction}
 
-The contribution of this work is a tool that automates the steps required to generate deployable artifacts of Erlang/\acrshort{otp} (\emph{\acrlong{otp}}) projects using a single command that runs without user interaction.
-This section explains relevant terminology and shows where manual interaction is required to generate \acrshort{otp} Releases. An overview of existing tooling and how they build on top of each other follows.
+The contributions of this work are \begin{enumerate*}[label=(\roman*)]
+  \item an extension to the pipeline described in~\cite{zak18} to bootstrap an Erlang/\acrshort{otp} (\emph{\acrlong{otp}}) node with a single command, which pulls artifacts from a central store and deploys them without interaction; and
+  \item an analysis of possible failure modes and root causes that may prevent an upgrade from being applied successfully via \acrfull{dsu}.
+\end{enumerate*} This section explains relevant terminology and shows where manual interaction is required to deploy \acrshort{otp} Releases.
 
 \subsection{Erlang/OTP}
 
@@ -30,11 +32,11 @@ This process is tedious to perform manually, and impedes frequent deployment of 
 
 \subsection{Contribution}
 
-This work contributes design, implementation and evaluation of a \acrshort{dsu}-capable release generation tool for Erlang/\acrshort{otp} projects named \emph{BeamUp}. Its aim is to run without user interaction and to require as little configuration as possible.
+This work contributes design, implementation and evaluation of an extension to the build tool described in~\cite{zak18} for deploying Erlang/\acrshort{otp} Releases with support for \acrshort{dsu}. Its aim is to run without user interaction and to require as little configuration as possible. Additionally, the evaluation includes an analysis of \acrshort{dsu} failure modes.
 
-\paragraph{Goal.} The goal is to develop a prototype implementation that produces \acrshort{otp} release packages. The tool should be easy to set up on major hosted \acrfull{ci} platforms~\cite{dig2016usage}, and integrate with the Git \acrfull{vcs}~\cite{sink2011version} to use commit hashes as version strings, instead of requiring the developer to increment version numbers by hand.~\cite{maste2016} It must handle generating \acrshort{dsu} instructions, as well as assembling and storing \acrshort{otp} Releases in a completely automated, hands-off way so that the tool may be used as part of a \acrshort{ci} pipeline.
+\paragraph{Goal.} The goal is to develop a prototype implementation for bootstrapping an Erlang node with a single command. The node agent subscribes to the previously described release store to fetch release packages, download, extract, and deploy them; as well as apply \acrshort{dsu} instructions.
 
-\paragraph{Method.} The thesis describes in detail the architectural and design decisions made while iteratively implementing said build tool. The prototype is evaluated for correctness and run time performance on six hosted \acrshort{ci} platforms that provide a free tier: \emph{CircleCI, Codeship, Semaphore, Shippable, Travis CI,} and \emph{Wercker}. Finally, the work discusses limitations and advantages of the proposed tool.
+\paragraph{Method.} The thesis describes the architectural and design decisions made while iteratively implementing said node agent. The prototype is then used to tests the boundaries of the \acrshort{dsu} process. Finally, the work discusses limitations and advantages of the implementation.
 
 \cleardoublepage
 \subsection{State of the Art}\label{sec:sota}

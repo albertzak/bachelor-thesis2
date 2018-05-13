@@ -1,52 +1,13 @@
 \cleardoublepage
-\section{Evaluation}
-
-
-\subsection{Test Setup}
-The \lstinline|beamup-io/benchmark| repository was configured to build on push with six \acrfull{ci} platforms: \emph{CircleCI}, \emph{Codeship}, \emph{Semaphore}, \emph{Shippable}, \emph{Travis CI}, and \emph{Wercker}. Note that only Travis CI offered the choice of running inside a container or on a \acrshort{vm}, while the other providers always build inside a container. To allow comparison between build times on \acrshort{vm} and already running containers, Travis CI was allowed to pull and cache the \lstinline|amd64/erlang:20.1.2| Docker image before starting the benchmark.~\cite{docker:erlang} Each platform was minimally configured to run the same \lstinline|bash| script to perform a fixed sequence of steps. All releases were stored on the local file system of the \acrshort{ci} host, and the test projects included no external dependencies to avoid build time measurements being affected by the network. The benchmark script performed the following steps:
-
-\begin{enumerate}
-  \item Timed installation of the \acrshort{cli} tool via the single line command in Listing~\ref{lst:curlpipesh}.
-  \item Scaffolding a new minimal Erlang project, using the \lstinline|beamup new| convenience command. This also set up a Git repository and performed an initial commit.
-  \item Timed generation of a full initial release from an empty cache by invoking \lstinline|beamup|.
-  \item Timed generation of another full initial release, invoking the same command, but this time accessing the primed cache from the previous step.
-  \item Inserting one line of code into the start function of the application module to print a message. The change is staged and committed.
-  \item Timed generation of a release that includes upgrade instructions from the initial release, by invoking the same \lstinline|beamup| command, accessing the identical primed cache from the previous steps.
-  \item Clearing the cache.
-  \item Timed generation of the same release upgrade, but now starting from an empty cache.
-\end{enumerate}
-
-After each timed step (1., 3., 4., 6., and 8.), the benchmark script posted the measured timings along with an identifier of the \acrshort{ci} platform, the current benchmark revision, and the current step to a central server. Since the platforms were configured to build on every push to the benchmark repository, another script running on a separate machine generated a new commit and pushed the repository every two minutes.
-In total, $n=$ 64 commits were triggered, resulting in 64 $*$ 7 $=$ 448 build runs. During each build run, five steps were benchmarked for execution time, giving a projected total amount of measurements of 448 $*$ 5 $=$ 2240.
-
-\cleardoublepage
-\subsection{Results}
-Table~\ref{table:ci_evaluation} lists average time $\bar{s}$ and standard deviation $\sigma$ for each benchmarked step on the respective \acrshort{ci} platforms.
-
-\begin{table}[h]
-  \setlength{\tabcolsep}{8.6pt}
-  \renewcommand{\arraystretch}{1.5}
-  \centering
-  \input{sections/table_ci_evaluation}
-  \vspace{6pt}
-  All timings are in seconds [$s$]. $n=$ 64.
-
-  \caption{Comparison of build run time on various \acrshort{ci} providers.}\label{table:ci_evaluation}
-\end{table}
-
-\paragraph{Build failures.} Three out of the 448 total build runs failed (0.7$\%$). All failures happened on Travis CI while running on a \acrshort{vm}, and all were related to transient network issues. The first failure happened before the tool was first invoked while downloading a precompiled Erlang environment during initialization of the \acrshort{vm} environment.
-The other two failures happened while the build tool \lstinline|rebar3| fetched an external dependency. One time no file was downloaded at all, while the other failure was caused by mismatching checksums.
-
-\cleardoublepage
 \section{Discussion}
 
 The following two sections qualitatively review the contribution with respect to the stated goals, and expose limitations of the current implementation as well as discuss flaws inherent to the design.
 
 \subsection{Advantages}
 
-\paragraph{Hands-off operation.} The tool is meant to be used as part of a \acrfull{ci} pipeline. Invoking a single command generates a deployable artifact from a checkout of the code base. Version identifiers are constructed out of commit timestamps and hashes, and \acrfull{appup} are generated on a best-effort basis. Previous releases are fetched from a central store, where the newly generated release artifact is uploaded to.
+\paragraph{One time setup.} The tool is meant to be used as part of a \acrfull{ci} pipeline. Invoking a single command generates a deployable artifact from a checkout of the code base. Version identifiers are constructed out of commit timestamps and hashes, and \acrfull{appup} are generated on a best-effort basis. Previous releases are fetched from a central store, where the newly generated release artifact is uploaded to.
 
-\paragraph{Installation.} The \acrshort{cli} build tool is installed with a single command that does not need super user permissions, is not dependent on any specific package manager, and has no dependencies except \lstinline|curl|, \lstinline|bash| and Git––which can safely be assumed to exist on the system.
+\paragraph{.} The \acrshort{cli} build tool is installed with a single command that does not need super user permissions, is not dependent on any specific package manager, and has no dependencies except \lstinline|curl|, \lstinline|bash| and Git––which can safely be assumed to exist on the system.
 
 \paragraph{\acrshort{ci} support.} The tool has been shown to work on at least six common hosted \acrfull{ci} providers: \emph{Travis \acrshort{ci}, Codeship, Circle \acrshort{ci}, Wercker, Semaphore,} and \emph{Shippable}. Build run time and setup effort are comparable across providers.
 
