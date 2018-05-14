@@ -16,7 +16,6 @@
 \renewcommand{\rmdefault}{phv} % Arial
 \renewcommand{\sfdefault}{phv} % Arial
 
-
 \usepackage{microtype}
 \usepackage{geometry}
 \usepackage{bookmark}
@@ -87,7 +86,7 @@
 % Hide number in first line of code listings
 \makeatletter
 \def\lst@PlaceNumber{\ifnum\value{lstnumber}=0\else
-  \rlap{\normalfont\kern\linewidth \kern\lst@numbersep\lst@numberstyle{\thelstnumber}}\fi}
+  \rlap{\normalfont\kern\linewidth{}  \kern\lst@numbersep\lst@numberstyle{\thelstnumber}}\fi}
 \makeatother
 
 \pdfpageheight=297mm
@@ -107,11 +106,11 @@
 \include{sections/abstract}
 
 \renewcommand{\glsnamefont}[1]{\textbf{#1}}
-\doublespacing
+\doublespacing{}
 \printglossary[title=List of Abbreviations,nonumberlist,type=\acronymtype]
-\singlespacing
+\singlespacing{}
 
-\cleardoublepage
+\cleardoublepage{}
 
 \section*{Key Terms}
 Continuous Delivery\\
@@ -122,11 +121,11 @@ Elixir \\
 Automation \\
 Dynamic Software Updating \\
 
-\cleardoublepage
+\cleardoublepage{}
 
 \tableofcontents{}
 
-\cleardoublepage
+\cleardoublepage{}
 
 \pagenumbering{arabic}
 

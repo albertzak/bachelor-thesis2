@@ -8,7 +8,7 @@
 \subsection{Issues Caused by Old Code}
 % TODO Map to Hick's "Assumptions"
 
-This is the most severe class of issues, as they may prevent any Release Upgrades from being applied. If these concerns were not taken care of at the time when the previous version was developed, any nodes running that code cannot be upgraded without losing at least part of their state –– meaning some processes may have to be forcibly terminated, or cause other processes to terminate unexpectedly, or the whole emulator may have to reboot.
+This is the most severe class of issues, as they may prevent any Release Upgrades from being applied. If these concerns were not taken care of at the time when the previous version was developed, any nodes running that code cannot be upgraded without losing at least part of their state -- meaning some processes may have to be forcibly terminated, or cause other processes to terminate unexpectedly, or the whole emulator may have to reboot.
 
 \paragraph{Infinitely blocking receive clauses.}
 By default, an Erlang process expecting a particular message blocks forever until it successfully pattern matches on the received term. Recall that the \acrshort{beam} can keep up to two versions of a module loaded in memory at once. Any processes running the oldest version while a third newer one is loaded are killed because the oldest module is purged from memory. In the case of Release Upgrades, either some processes' state is lost or the upgrade will not be applied. Using the default process purge strategy \lstinline|brutal_purge|, old processes are killed; while \lstinline|soft_purge| aborts the upgrade if any processes are running old code.
