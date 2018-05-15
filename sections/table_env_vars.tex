@@ -1,0 +1,42 @@
+\begin{table}[h]
+  \setlength{\tabcolsep}{10pt}
+  \centering
+  \begin{tabularx}{\textwidth}{l X X}
+    Host & Launcher & Container entrypoint \\
+    \hhline{===}
+    $\langle$\emph{Working directory}$\rangle$ &
+      Passed as \lstinline|PROJECT_DIR| \newline
+      either as-is or with container path of mount point &
+      Passed through \\
+    \hline
+    \lstinline|ERLANG_VERSION| &
+      Used to determine \newline
+      image identifier &
+      Validated against \newline
+      currently installed version \\
+    \hline
+    \lstinline|ELIXIR_VERSION| &
+      Passed through &
+      Used to validate and/or \newline
+      install Elixir \\
+    \hline
+    --- &
+      \lstinline|TERM| set to \lstinline|dumb| &
+      Passed through \\
+    \hline
+    --- &
+      Contents read from global gitignore
+      file and passed on as \lstinline|GLOBAL_GITIGNORE| &
+      Contents written to \newline
+      container's global \newline
+      \emph{gitignore} file \\
+    \hline
+    \lstinline|STORE| & Passed through & Passed through \\
+    \hline
+    \lstinline|STORE_SECRET| & Passed through & Passed through \\
+    \hline
+    \lstinline|DEBUG| & Passed through & Passed through \\
+    \hline
+  \end{tabularx}
+  \caption{Transformation of environment variables between host and container.}\label{table:envvars}
+\end{table}

@@ -1,6 +1,8 @@
 \section{Implementation}
 
-The contribution of this work, the tool \emph{BeamUp}, is implemented in three parts. First, the \emph{\acrlong{cli}} (\emph{\acrshort{cli}}) tool takes care of setting up a clean environment for the build to run in. Second, the \emph{builder} performs the  steps to assemble an artifact. To generate \acrshort{dsu} instruction files, the builder needs to fetch previous artifacts from a central location. The third component, the \emph{store}, manages the life cycle of artifacts.
+The contribution of this work is an extension to the tool \emph{BeamUp}~\cite{zak18} for bootstrapping an Erlang node to start an OTP Release with a single command, and to continuously apply Release Upgrades to the running system without user interaction using Erlang/OTP's built-in support for \acrshort{dsu}. The \emph{node agent} is written in Erlang, and runs on a separate \acrshort{beam} instance side by side to the \emph{operational node}. The agent subscribes to a central store to fetch release packages, caches them locally, and boots, controls, and monitors the operational node.
+
+% TODO: Figure of the two BEAMs
 
 \begin{figure}[h]
   \centering
@@ -25,445 +27,85 @@ The contribution of this work, the tool \emph{BeamUp}, is implemented in three p
   \caption{Architecture outline.}\label{fig:impl}
 \end{figure}
 
-\subsection{\acrlong{cli} Tool}
+The following subsections explain the changes made to the release store and \acrshort{cli} tool, the bootstrapping process, how the node agent is implemented, and how the agent interacts with the operational node.
 
-The main point of entry to the \acrshort{cli} tool is the \emph{launcher}. Acting as the starting point for all invocations, it is implemented as a \lstinline|bash| script. To provide a repeatable build environment, the launcher prefers to start a well-known \emph{Docker} container to run the given command in (see figure~\ref{fig:cliseq}). If, however, the launcher is invoked as part of an already running \acrshort{ci} container, it is not possible to start a new one. Thus, the launcher first has to detect whether it is running inside a container or not. In case it is being called directly on a host or a \acrfull{vm}, and is able to start containers, the launcher pulls the correct image for the host's machine architecture in combination with the requested Erlang/OTP version. Then it sets up volume mounts and environment variables, and calls the Docker client to start the container.
+\subsection{Store}
 
-If the launcher is already running inside a container, the responsibility is reduced to passing the given arguments through to the \emph{container entrypoint}. The following paragraphs describe how each component of the launch sequence, including installation of the \acrshort{cli} tool itself, is implemented.
 
-\begin{figure}[h]
-  \centering
-  \begin{tikzpicture}[>=latex']
-    \tikzset{block/.style={
-      draw,
-      rectangle,
-      align=center,
-      minimum width=2.8cm,
-      minimum height=1cm
-    }};
+\paragraph{Release name.}
+OTP has no notion of a project; the most coarse level of organization is a Release, which is given a name. Multiple distinct Releases comprising different Applications may be generated from a single codebase, each bearing a unique name. For example, individual nodes in a distributed setup may run separate Releases with distinct configurations. The build tool described in~\cite{zak18} ignored this fact and generated only one release, always picking the name of the containing folder (the project name) as the name for the release. An artifact was identified by the combination of project name, release version, machine architecture, and git branch. All \acrshort{api}s now additionally take into consideration the release name, defaulting to the project name if left unspecified.
 
-    \node [block] (installer) {\textbf{Installer}};
-    \node [block, right=1cm of installer] (launcher) {\textbf{Launcher}};
-    \node [block, right=1cm of launcher] (entrypoint) {\textbf{Entrypoint}};
-    \node [block, right=1cm of entrypoint] (command) {$\langle$\emph{Command}$\rangle$};
-    \node [block, below=0.8cm of launcher] (docker) {Docker};
+\paragraph{Notifications.} The store now provides an additional endpoint through which nodes can subscribe to be notified when new artifacts are available. The notification system is based on the \acrfull{sse} standard, with the payload message encoded in \acrfull{etf}. Decoding the update notification yields a tagged tuple containing the just latest version string. The new binary release package needs to be fetched separately via the existing single artifact \acrshort{http} GET endpoint.
 
-    \node [inner sep=0pt,
-      yshift=-1.8cm,
-      minimum height=0.6cm,
-      fit={(entrypoint) (command)},
-      label=center:Linux Container] (container) {};
+\input{sections/fig_store_api}
 
-    \node [
-      above left=1cm and -0.5cm of launcher,
-      label=left:\text{``\lstinline|beamup| $\langle$\emph{Command}$\rangle$}''] (start) {};
-
-    \path[draw,->] (launcher) edge (entrypoint)
-      (entrypoint) edge (command);
-
-    \path[densely dashed,->] (installer) edge (launcher)
-      (launcher) edge (docker);
-
-    \path[draw,o->,thick] (start) edge[bend left] (launcher);
-
-    \node [draw=black!50, densely dashed, fit={
-      (entrypoint) (command) (container)
-    }, inner sep=10pt] (container_box) {};
-
-    \path[draw,->] (docker) edge (container -|container_box.west);
-
-  \end{tikzpicture}
-  \caption{\acrshort{cli} execution sequence.}\label{fig:cliseq}
-\end{figure}
-
-\cleardoublepage
-\paragraph{Installation.} The \acrshort{cli} tool is installed by downloading a \lstinline|bash| script and piping it to the shell (Listing~\ref{lst:curlpipesh}). This pattern is informally known as ``\emph{curl pipe sh}'' and is commonly used because of its simplicity. However, its appearance may deter security-conscious users, a limitation which is discussed in Section~\ref{sec:curlpipesh}. A content delivery network ensures the installer script is served exclusively over \acrshort{http}S (\acrlong{http} Secure).
+\subsection{Bootstrapping}
+The invocation of the \acrshort{cli} tool to start a node running the latest version of a particular project is given in Listing~\ref{lst:node}. The node is pointed at the release store via environment variables, optionally supplying a shared authentication token, and is told what project and optionally what release name to run. Note that this command only needs to be run once, except after a reboot of the host. The node subscribes to the store to be notified of new versions, and downloads and applies them without user interaction.
 
 \begin{lstlisting}[
-  label={lst:curlpipesh},
-  caption={CLI tool installation command.}
+  label={lst:node},
+  caption={Minimal node bootstrap command.}
 ]
-curl https://get.beamup.io/install | /bin/sh
+BEAMUP_NODE_PROJECT_NAME=mychat \
+BEAMUP_STORE=https://store.example.com \
+beamup node
 \end{lstlisting}
 
-When the installer detects it is being executed inside an interactive terminal session, it pauses for a few seconds to give the user a chance to abort installation. Next, the installer clones the \acrshort{cli} repository \lstinline|beamup-io/cli| to the \lstinline|~/.beamup| folder of the current user's home directory. Note that cloning a repository keeps file permissions intact, including the executable bit that is set on the main \acrshort{cli} launcher script.~\cite{sink2011version} At no point are super user permissions needed. To allow invoking \lstinline|beamup| inside any project directory, the installer first attempts to create a symbolic link to the launcher in \lstinline|/usr/local/bin/|. Should this fail, the script falls back to displaying instructions on how to add the newly installed tool to the executable path. Finally, to make sure that installation was successful, the tool is invoked for a selftest.
-
-\paragraph{Self update.} Because the \acrshort{cli} tool is little more than a local clone of a remote repository, distributing and installing updates to the tool itself becomes as trivial as pulling changes from the remote. A convenience wrapper is provided via the \acrshort{cli} command \lstinline|beamup update|.
-
-\paragraph{Project scaffolding.} To quickly create a basic folder and file structure for new projects in various \acrshort{beam} languages, the \acrshort{cli} provides a convenience command:
-
-\lstinline|beamup new| $\langle$\emph{project name}$\rangle$ takes the name of the project to scaffold and creates a new subdirectory. Inside, it outputs a minimal deployable codebase, including setting up a Git repository and making an initial commit.
-
-\subsubsection{Transparent Container Invocation}
-
-All commands first go through the launcher, which attempts to set up a container to run the given command in. Many \acrshort{ci} platforms confine the whole build process to a container that has already been set up and started. Conversely, the tool must be able to either operate inside an already running \acrshort{ci} container, or transparently start a new container and pass control inside. The launcher attempts to detect whether it is being called inside a container by parsing the \emph{control groups} (cgroups) file. While detection in this way is widespread, it is not recommended, since it relies on an implementation detail of the container runtime. However, work to add container introspection capabilities is ongoing.\footnote{\url{https://github.com/moby/moby/pull/26331}} To provide a temporary solution until an interface is finalized and widely deployed, the tool checks for artifacts of common container runtime implementations in the cgroups file: \emph{Docker}, \emph{\acrlong{lxc}} (\acrshort{lxc}), and \emph{Amazon Web Services ECS}. If the tool is being run inside a container, execution is simply passed on to the container entrypoint along with all arguments under the assumption that the container's environment is sufficiently correct, i.e.~has the requested version of Erlang/OTP preinstalled.
-
-\paragraph{Determining the base image.} When the launcher determines that it is able to start a container to run the build in, that is, when the tool is being invoked inside a \acrshort{vm} or on bare metal, it needs to consider the following two attributes to determine which image to instantiate a container from:
-\begin{enumerate*}[label=(\roman*)]
-  \item the requested version of Erlang/OTP, read from an environment variable, and
-  \item the host's machine architecture.
-\end{enumerate*}
-
-Official builds of Erlang/OTP for various architectures are provided on the \emph{Docker Hub}. Such images are available under the namespace of the respective architecture identifier as used by the \emph{Go} programming language. A challenge lies in reliably normalizing the machine architecture as reported by \lstinline|uname -m|. Note that starting from version 17.06, Docker implicitly pulls images for the correct architecture.~\cite{docker:docs} However, because the tool is designed to support Docker down to version 1.12, the launcher has to manually determine the architecture and map it to an image namespace identifier using the normalizations given in table~\ref{table:architectures}.
-
-\begin{table}[h]
-  \setlength{\tabcolsep}{10pt}
-  \centering
-  \begin{tabular}{ r l }
-    Output of \lstinline|uname -m| & Identifier \\
-    \hline
-    \lstinline|arm arm32 armv7 armv7l armhfp| & \lstinline|arm32v7| \\
-    \lstinline|arm64 armv8 armv8b armv8l aarch64 aarch64_be| & \lstinline|arm64v8| \\
-    \lstinline|i386 i686 i686-64 i686-AT386| & \lstinline|i386| \\
-    \lstinline|s390x s390| & \lstinline|s390x| \\
-    \lstinline|ppc ppc64 ppcle ppc64le| & \lstinline|ppc64le| \\
-    $\langle$\emph{other}$\rangle$ & \lstinline|amd64| \\
-  \end{tabular}
-  \caption{Mapping between reported machine architecture and image identifier.}\label{table:architectures}
-\end{table}
-
-Note that support for other \acrshort{beam} languages such as Elixir is handled within the \emph{container entrypoint}, and at this stage it is sufficient to pull an image containing just the Erlang/OTP runtime. Additionally, there are currently no official images of Elixir available for all machine architectures supported by the plain Erlang/OTP images.
-
-\cleardoublepage
-\subsubsection{Volume Mounts}
-The launcher mounts various volumes into the container. Table~\ref{table:volumes} lists the volume mounts and the following paragraphs describe each one in more detail.
-
-\begin{table}[h]
-  \setlength{\tabcolsep}{10pt}
-  \centering
-  \begin{tabular}{ l c l }
-    Host & & Container \\
-    \hline
-    Current working directory &
-      $\Longrightarrow$ &
-      Project directory \\
-    Combined cache directory &
-      $\Longleftrightarrow$ &
-      $\langle$\emph{Various cache directories}$\rangle$ \\
-    RAM disk or temporary directory &
-      $\Longleftrightarrow$ &
-      Temporary directory \\
-  \end{tabular}
-  \caption{Container volume mounts.}\label{table:volumes}
-\end{table}
-
-\paragraph{Project.} The build tool needs controlled access to the directory containing the Erlang/OTP project which is to be built. The launcher must be invoked inside that directory, and derives the project's name from its path. The build tools need to take care not to permanently alter any files of the original project folder on the host as doing so may interfere with other parts of the build pipeline. To guarantee that the project files remain unmodified, the current working directory is mounted as a read-only volume.
-
-\paragraph{Cache.} Minimizing build run time is crucial for a pleasant workflow. Many \acrshort{ci} platforms offer a way to cache the contents of certain folders between build runs. A number of cache locations inside the container are bind mounted to a single cache path on the host. Combining the cache paths into one folder on the host makes it trivial to setup caching, as instead of having to configure multiple, possibly changing paths for each tool separately, it is sufficient to cache just one folder. Currently, the host cache folder combines bind mounts of the following locations inside the container:
-\begin{itemize}
-  \item Compiled artifacts and dependencies of the tool itself;
-  \item Dependency cache directories of the build tools \lstinline|rebar3| and \lstinline|mix|;
-  \item Erlang and Elixir interactive shell history files;
-  \item Precompiled, downloaded, and extracted Elixir release.
-\end{itemize}
-Note that if the launcher is unable to start a container, caching would have to be set up explicitly for each location. Consolidating the caches using symbolic links does not work with all of the required build tools.
-
-\paragraph{Virtual RAM disk.} The run time of the build tool is bound by the performance of the file system and storage media. Additionally, building upgrade releases required the entire project folder to be temporarily duplicated at least twice for each previous release.
-If supported by the \emph{Docker} client, the container's \lstinline|/tmp| directory is mounted as a \emph{\acrlong{tmpfs}} (\emph{\acrshort{tmpfs}}) on the host's \acrlong{ram} (\acrshort{ram}). In case the size of the temporary file system grows beyond the available \acrshort{ram}, the host \acrshort{os} transparently falls back to consuming swap space.
-
-\cleardoublepage
-\paragraph{Environment variables.} All configuration for the tool is provided via environment variables instead of files or interactive menus. Most \acrlong{ci} platforms provide a straightforward way to configure environment variables for the build pipeline, and many offer additional facilities to encrypt or otherwise store environment variables in a secure way. The launcher reads various environment variables and other parameters of the host, applies transformations given in table~\ref{table:envvars}, and passes configuration on to the \emph{container entrypoint}, again via environment variables.
-
-\begin{table}[h]
-  \setlength{\tabcolsep}{10pt}
-  \centering
-  \begin{tabularx}{\textwidth}{l X X}
-    Host & Launcher & Container entrypoint \\
-    \hhline{===}
-    $\langle$\emph{Working directory}$\rangle$ &
-      Passed as \lstinline|PROJECT_DIR| \newline
-      either as-is or with container path of mount point &
-      Passed through \\
-    \hline
-    \lstinline|ERLANG_VERSION| &
-      Used to determine \newline
-      image identifier &
-      Validated against \newline
-      currently installed version \\
-    \hline
-    \lstinline|ELIXIR_VERSION| &
-      Passed through &
-      Used to validate and/or \newline
-      install Elixir \\
-    \hline
-    --- &
-      \lstinline|TERM| set to \lstinline|dumb| &
-      Passed through \\
-    \hline
-    --- &
-      Contents read from global gitignore
-      file and passed on as \lstinline|GLOBAL_GITIGNORE| &
-      Contents written to \newline
-      container's global \newline
-      \emph{gitignore} file \\
-    \hline
-    \lstinline|STORE| & Passed through & Passed through \\
-    \hline
-    \lstinline|STORE_SECRET| & Passed through & Passed through \\
-    \hline
-    \lstinline|DEBUG| & Passed through & Passed through \\
-    \hline
-  \end{tabularx}
-  \caption{Transformation of environment variables between host and container.}\label{table:envvars}
-\end{table}
-
-Since the tool must run without interactivity, the launcher exports the \lstinline|TERM| variable set to ``\lstinline|dumb|''. Additionally, the contents of the host's global \emph{gitignore} file~\cite{man:git} are read to an environment variable and passed into the container entrypoint to be written out again. This avoids situations where the host sees the working tree as clean, yet the builder refuses to run because files may be present that are ignored by the host, but not by the builder. Note that neither the architecture of the host, nor the architecture part of the image identifier are passed into the container, as the builder internally retrieves the system architecture string as reported by Erlang, and this differs from the image identifier used at the launcher stage. Lastly, authentification credentials for the store are passed through, as is a flag to enable verbose debug output. See table~\ref{table:envvars} for an overview of how various parts of the build pipeline use environment variables to pass and transform the configuration data.
-
-\cleardoublepage
-\subsubsection{Container Entrypoint}
-
-As stated above, the \acrshort{cli} may be launched inside an already running container, or start a clean container. In any case, the \emph{container entrypoint} is a \lstinline|bash| script that is always executed inside a container. Yet it may only make minimal assumptions about its environment since the container may have been set up already with parameters beyond the launcher's control. The primary job of the container entrypoint is to compile the builder. It is also responsible for setting up the Erlang code path to include the location of the builder's compiled artifacts, and to add the directory containing the \emph{command scripts} to the system's executable path. Finally, the container entrypoint script calls \lstinline|exec| to replace the execution of itself with the program whose name and arguments were passed through by the \acrshort{cli} launcher. Such constructs are common in container entrypoint scripts, as doing so allows to transparently invoke any executable inside the container as if the program was running on the host, while making necessary changes to the environment inside the container before passing control onwards.
-
-\paragraph{Command scripts.} Erlang scripts (escripts) provide a way to transparently call Erlang code from the system's shell.~\cite{doc:otp} Some of the tool's commands, including ``build'', ``self-test'', and ``install elixir'' are implemented as Erlang scripts. They act as thin wrappers for the Erlang modules that make up the builder application. The responsibility of the command escripts is to read from various environment variables and to supply them as valid arguments to the builder application.
-
-\paragraph{Elixir support.} If requested via environment variable, a precompiled package of the popular alternative \acrshort{beam} language Elixir is downloaded and extracted to a cached location, and its binaries are added to the executable path.
-
-\cleardoublepage
-\subsection{Builder}
-
-With the environment set up correctly, the builder is ready to run. As the tool's setup effort should be minimal, the builder takes care to edit the project's configuration files: It replaces version numbers with commit hashes and ensures various settings to enable \acrshort{dsu} support. Then, lower-level build tools are invoked to fetch the project's dependencies, and compile them together with the modules. The builder also communicates with the central release store to download the previous releases from which upgrades are to be built. Next, the builder orchestrates generation of \acrshort{appup}s and a \acrshort{relup} file for each previous release. Finally, the generated upgrade instructions are collected, merged and packaged together with the assembled \acrshort{otp} Release of the project, and the resulting artifact is uploaded to the store.
-
-\subsubsection{Initialization}
-
-The builder first gathers some information about the project to check whether a release can and should be built. Then the project folder is duplicated to a writable scratch location.
-
-\paragraph{Tool detection.} First, the builder attempts to detect which of the supported build tools are used in the project: Erlang projects are often built with \lstinline|rebar3|, and \lstinline|mix| is mainly used on Elixir projects. Note that some projects may be built with both tools, in which case the builder prefers to invoke \lstinline|mix|.
-
-\paragraph{Sanity checks.} Recall that a version string of a built release must uniquely identify the state of the code base at one point in time to successfully perform \acrshort{dsu}. Therefore, the build tool must ensure that the project is in a clean state before starting the build process, i.e.~the state of all tracked files must be equal to their last-committed state. Note that the working tree may very well contain untracked files that are specific to the currently checked out branch, such as configuration files. Since configuration data often includes sensitive credentials, best practices recommend to keep such files out of version control by instructing the \acrshort{vcs} to ignore them. Yet the built artifact must include such configuration data. Sanity checks are applied to the repository to make sure that \begin{enumerate*}[label=(\roman*)]
-  \item no tracked files have been modified since the last checked out commit; and
-  \item that there are no new untracked and unignored files present in the working tree.
-\end{enumerate*}~\cite{man:git}
-Directory layout must follow \acrshort{otp} conventions, and the tool expects all configuration files at their default locations.
-
-\paragraph{Working copy.} Recall that the original project folder must not be modified in any way, whether it is mounted as a read-only volume or not. However, the build tools must be able to freely modify various configuration files of the project, e.g.~overwrite version numbers, or add dependencies and output artifacts.
-Ideally, the project folder would be mounted as a layered \acrfull{cow} file system where the tools may modify any files in a writable upper layer that is overlaid above the original read-only project folder. However, creating overlay file system mounts inside a container requires running the container with elevated privileges, which is generally discouraged~\cite{docker:docs} and often not supported on \acrshort{ci} platforms, as well as requiring additional configuration of the host. Therefore, \acrshort{cow} file system mounts are not feasible on \acrshort{ci} platforms. Another way to implement rollback capabilities would be to exploit a \acrlong{vcs} such as Git to track changes made to the project folder. This approach is not optimal either as doing so would \begin{enumerate*}[label=(\roman*)]
-  \item require stripping existing Git metadata from the project; and
-  \item Git is not recommended for tracking changes to large binary files such as compiled bytecode artifacts or release tarballs.
-\end{enumerate*}
-
-Since the tool must require minimal effort to set up on various \acrshort{ci} platforms, a naive solution was chosen: First, mount the project folder as a read-only volume into the container. When the lower-level build tools need to write to the project directory, the whole working tree is duplicated -- preferably to a \acrshort{ram} disk. The tools can then operate on the temporary copies without restriction, and the original project folder on the host is never edited by any process inside the container. Note that if the tool is started inside an already running container, said restriction of read-only volumes does not apply and the tool must take care to never modify the original location by first creating a copy to a temporary location.
+\paragraph{Transparent container invocation.}
+All \lstinline|beamup| \acrshort{cli} commands are either executed directly on the host, or, if possible, passed into a newly started container where they run in a well-defined environment. If it is not possible to start containers –– which is the case if the tool is being started inside an already-running container –– then it must assume that the \acrshort{erts} is  set up correctly on the machine. This is why the tool prefers to pass execution into a well-known container, where the same command is then ran again. Once inside, the tool can safely proceed under the assumption that the environment is correct.~\cite{zak18}
 
 
-\subsubsection{Configuration overrides} To successfully compile releases that can be started on another machine, and may even be hot upgradable, certain configuration parameters are needed for various tools. As the requirements call for minimal setup effort, the developer is not expected to care about these settings or specify them beforehand. First, the release must include a dependency on the \acrfull{sasl} application to have \acrshort{dsu} or \emph{release handling} capabilities, i.e.~may be hot upgradable. Next, the Erlang compiler (erlc) needs to be instructed to include debug information and abstract code in the compiled \acrshort{beam} files, because application upgrade instructions are generated by inspecting the abstract code of previous releases and comparing it with the current build. Note that including abstract code in the release makes it possible to reconstruct the Erlang source code.~\cite{doc:otp}
+\paragraph{Container privileges.}
+The container is started in privileged mode and with host networking. This means that no port mapping is required or even possible. The container shares the same \acrshort{ip} address as the host, and can listen on all unprivileged ports except those used by other programs running on the host. The same applies to other devices attached to the host machine, they are accessible from within the container. The advantage of starting the node with this command is its simplicity, as the fact that the operational node is running inside a container becomes mostly transparent to the user.
 
-Depending on the build tool used for the project, some configuration files have to be updated. For \lstinline|rebar3| projects, the application upgrade instruction generation plugin is added as a local dependency to the project. Since \lstinline|rebar3| internally uses \lstinline|relx| to assemble the release, the release must be generated with \emph{development mode} disabled, as otherwise dependencies would not be copied into the release but just referenced via a symbolic link. Since the actual files remain inside the ephemeral container, this would make the produced release unusable.
+\paragraph{Bare node container.}
+The command in Listing~\ref{lst:node} is not suitable for deploying more complex services, as there is no way of arbitrarily accessing the host's file system, or restricting access to the host's devices. At the same time, the container has access to the host networking stack, which poses a security risk because the container can write to, for example the host's D-bus.~\cite{docker:docs}
 
-\cleardoublepage
-\paragraph{Auto versioning.} The version numbers for the applications that make up the release are determined by retrieving the last commit that included changes in the respective application's directory. The autogenerated version string has the following format to remain sortable:
+For production deployments, it is thus recommended to start the provided general purpose \lstinline|beamup/node| container from the Docker Hub and configure its privileges and port mappings accordingly using any container orchestration tool. Doing so has the additional advantage of locking down the container's environment and communication capabilities in a declarative way.
+
+When the container is started, the same node command is invoked inside. Note that the version of Erlang/OTP which ships with the image is only relevant to the node agent, because the operating node will use the version of the \acrshort{erts} bundled with the release package, and the two \acrshort{beam}s running inside a node share nothing.
+
+\paragraph{Environment variables}
+% Table
+
+\paragraph{Node identification}
+% Cookie, Node name
 
 
-\begin{center}
-  $\langle$\emph{UNIX timestamp of commit in seconds}$\rangle$-$\langle$\emph{40 character commit hash}$\rangle$
-\end{center}
+\subsection{Release Packages}
+
+The node agent maintains two persistent directories which are mapped to the host file system: \begin{enumerate}[label=(\roman*)]
+  \item a local cache of release package tarballs in \lstinline[breaklines=true]|~/.beamup/node/releases|,
+  \item and one operating directory containing the current target system in \lstinline[breaklines=true]|~/.beamup/node/active|.
+\end{enumerate}
+
+On startup, the agent attempts to start a node from the operating directory. In case of a first run, or when there is no valid release found inside the operating directory, the supervising process yields. If an operational node can be started, the agent does not yet care what version it is running.
+
+In any case, the agent meanwhile connects to the store and retrieves the latest version metadata of the requested combination of project name, release name, machine architecture, and git branch.
+
+When the latest version happens to be the same as the one inside the operating directory, it has already been started and no further action is needed. Otherwise, the latest package is either fetched from the local release cache, or downloaded and stored before it is unpacked to the operating directory.
+
+If there is no latest version of the requested artifact present in the remote store, the agent prints a warning and yields. Nonetheless, it subscribes to be notified when a matching package is published.
 
 
-The tool generates a version string for each application, and overwrites the value of the version tuple in each app's configuration file. This ensures that the version of an application changes between different releases if and only if any files of that application were changed. Note that minor non-functional changes such as comments or formatting also result in a changed version string. Lastly, another version string is generated from the root of the project's working tree to be used as an identifier for the entire release.
+\paragraph{Extracting release packages.}
+When unpacking a release, the agent must take care to use the correct method: If the operating directory contains a valid target system, the agent must call the release handler of the operational node to properly unpack the new release on top of the currently running one. This is important because the \lstinline|RELEASES| file in the operating directory contains metadata about all of the releases that are currently available to the node. Yet the release package which is to be extracted on top of the operating folder contains another \lstinline|RELEASES| file, which may not overwrite the existing one. Their contents must be properly merged by the release handler, as the new release will be marked as ``unpacked, but not yet installed'', and the old release metadata must remain inside this file. The release handler also performs some sanity checks for missing files on the release package before extracting. On the other hand, if there is no target system available in the operating folder, the package is simply unpacked using \lstinline|tar|.
+
+\subsection{Node Agent}
+
+The node agent is responsible for starting and upgrading the operational node. It runs on a separate instance of the \acrshort{beam} side by side to the operational node, and is designed to be minimally intrusive. Communication only happens via the target system's exposed convenience scripts inside its \lstinline|bin| directory. When a release is to be upgraded, for example, the node agent spawns another OS-level process of the system's shell, calling the \lstinline|bin/upgrade| script with the required parameters, and waiting for it to terminate. This
+degree of separation may appear inefficient, as the node agent could just join the operational node using a hidden shell and directly interact with the release handler. Yet, by only assuming the existence of the informal \acrshort{api} exposed by the scripts in \lstinline|bin|, whatever tool used to assemble the release can define exactly how the upgrade should take place.
+
+
+
+The node agent does not listen on any ports, and does not attempt to join other agents or the operational node's cluster by default. This is to allow the operational node to transparently interact with the host's networking stack by not causing unexpected port collisions when the node is started via the convenience command.
+
+
+\paragraph{Attaching a shell.}
+To perform tracing on a live system, administrators can attach a shell to either the node agent or
+
 
 \subsection{Release Upgrades}
 
-Recall that assembling a release upgrade used to require the developer to first write \emph{high level} {\acrfull{appup} for each application that is part of the release. Next, \lstinline|systools|, part of \acrshort{otp} \acrfull{sasl}, is used to translate the high level appups into low-level instructions and combine them into a single \acrfull{relup} file.~\cite{doc:otp}
-
-Work by~\cite{rebar3appup} demonstrated that high-level \acrlong{appup} can be generated on a best-effort basis by comparing compiled \acrshort{beam} and application resource files, additionally taking hints from the developer given as appup templates to guide the algorithm in complicated upgrade situations. Consequently, the builder needs access to the previous releases of which the current release will be able to know how to upgrade from.
-
-\paragraph{Fetching previous releases.} While the project is being compiled, the builder queries the store for a list of the version identifiers of currently stored artifacts that match the name of the project being built and that had been compiled on the same machine architecture that the builder is running on. The current combination of version identifier and branch is excluded from the returned list. Note that the branch identifier is only considered for excluding the current combination but not for other versions, as it might be helpful to generate release upgrades between branches. A node may hot switch its branch by applying a cross-branch upgrade. Each of the remaining releases are then downloaded and extracted to a temporary location.
-
-\cleardoublepage
-\subsubsection{Application Upgrade Instructions} For Erlang projects built with \lstinline|rebar3|, the \acrlong{appup} generator plugin~\cite{rebar3appup} is used. A limitation of this plugin is that it can only generate \acrshort{appup}s for applications by comparing exactly two releases; while the \acrshort{appup} specification includes the possibility of a single \acrshort{appup} file containing instructions to upgrade from multiple previous versions. Even when the \acrshort{appup} generator is invoked multiple times, it overwrites the previously generated instructions instead of appending to them. Hence, the \acrshort{appup} generator is invoked multiple times, each iteration between a single previous release and a fresh working copy of the current project. The upgrade instructions are output to each application's directory inside the current project, as depicted in figure~\ref{fig:appup_gen}. After each run of the generator plugin, the resulting \acrshort{appup} files are collected from the application subdirectories. Their contents and relative path are saved in memory, and the temporary copy of the project is deleted. After \acrshort{appup}s are generated and collected for all applications of all previous releases, the saved instructions are grouped by the application which they belong to. Each application's collected instructions are merged into one \acrshort{appup} structure, so that one \acrshort{appup} can be used to upgrade from any previous version to the current one. Figure~\ref{fig:instruction_merge} shows how four \acrshort{appup}s of two previous releases are grouped by application name and merged to a combined structure for each application, so that every application knows how to upgrade from its previous versions. The merged instructions are finally written back to the relative locations of the previously collected \acrshort{appup} files of the respective application directories inside the current project.
-
-\cleardoublepage
-% Generating upgrade instructions
-
-\ffigbox[\textwidth]{
-  \begin{subfloatrow}
-    \ffigbox[\textwidth]{
-      \centering
-      \begin{tikzpicture}[
-        >=latex',
-        release/.style={},
-        app/.style={rectangle, draw=black!50, anchor=west},
-        generator/.style={
-          draw,
-          shape border rotate=180,
-          regular polygon,
-          regular polygon sides=3,
-          align=center
-        }
-      ]
-        \pgfdeclarelayer{background}
-        \pgfdeclarelayer{foreground}
-        \pgfsetlayers{background,main,foreground}
-
-        \node [release] (prev1) {Previous Release $p$};
-        \node [below=of prev1.west, app, xshift=2mm] (prev1_app1) {App $a$ $\cdot$ version $w$};
-        \node [below=of prev1_app1.west, app] (prev1_app2) {App $b$ $\cdot$ version $y$};
-        \node [draw=black!50, fit={
-          (prev1) (prev1_app1) (prev1_app2)
-        }] (prev1_box) {};
-
-        \node [generator, right=of prev1] (appup_generator) {$\lambda$};
-
-        \node [release, right=of appup_generator] (curr1) {Current Release};
-        \node [below=of curr1.west, app, xshift=2mm, align=right] (curr1_app1) {App $a$ $\cdot$ version $x$\\$(\star)$ \acrshort{appup} $w\Leftrightarrow{}x$};
-        \node [below=of curr1_app1.west, app, yshift=-5mm, align=right] (curr1_app2) {App $b$ $\cdot$ version $z$\\$(\star)$ \acrshort{appup} $y\Leftrightarrow{}z$};
-        \node [draw=black!50, fit={
-          (curr1) (curr1_app1) (curr1_app2)
-        }] (curr1_box) {};
-
-        \path[draw,->,shorten >=2pt] (prev1 -| prev1_box.east) to (appup_generator);
-        \path[draw,->,shorten >=2pt] (curr1 -| curr1_box.west) to (appup_generator);
-
-        \path[draw,->] (appup_generator.south) |- (curr1_app1.189);
-        \path[draw,->] (appup_generator.south) |- (curr1_app2.189);
-
-        \begin{pgfonlayer}{background}
-          \node [draw=black!50, fit={
-            (prev1_box) (curr1_box)
-          }, fill=white, double copy shadow={shadow xshift=-4pt,
-          shadow yshift=4pt, fill=white, draw}] (generation) {};
-        \end{pgfonlayer}
-
-      \end{tikzpicture}
-    }{\caption{\acrfull{appup} generation.}\label{fig:appup_gen}}
-  \end{subfloatrow}
-  \vspace{40pt} \\
-  \begin{subfloatrow}
-    \ffigbox[\textwidth]{
-      \centering
-      \begin{tikzpicture}[
-        >=latex',
-        release/.style={},
-        app/.style={rectangle, draw=black!50, anchor=west},
-        generator/.style={
-          draw,
-          shape border rotate=180,
-          regular polygon,
-          regular polygon sides=3,
-          align=center
-        }
-      ]
-        \pgfdeclarelayer{background}
-        \pgfdeclarelayer{foreground}
-        \pgfsetlayers{background,main,foreground}
-
-        \node [release] (prev1) {Previous Release $p$};
-        \node [below=of prev1.west, app, xshift=2mm] (prev1_app1) {App $a$ $\cdot$ version $w$};
-        \node [below=of prev1_app1.west, app] (prev1_app2) {App $b$ $\cdot$ version $y$};
-        \node [draw=black!50, fit={
-          (prev1) (prev1_app1) (prev1_app2)
-        }] (prev1_box) {};
-
-        \node [generator, right=of prev1] (appup_generator) {$\lambda$};
-
-        \node [release, right=of appup_generator] (curr1) {Current Release};
-        \node [below=of curr1.west, app, xshift=2mm, align=right] (curr1_app1) {App $a$ $\cdot$ version $x$\\\acrshort{appup} $w\Leftrightarrow{}x$};
-        \node [below=of curr1_app1.west, app, yshift=-5mm, align=right] (curr1_app2) {App $b$ $\cdot$ version $z$\\\acrshort{appup} $y\Leftrightarrow{}z$};
-        \node [below=of curr1_app2.west, app, yshift=-4mm] (relup) {$(\star)$ \acrshort{relup}};
-        \node [draw=black!50, fit={
-          (curr1) (curr1_app1) (curr1_app2) (relup)
-        }] (curr1_box) {};
-
-        \path[draw,->,shorten >=2pt] (prev1 -| prev1_box.east) to (appup_generator);
-        \path[draw,->,shorten >=2pt] (curr1 -| curr1_box.west) to (appup_generator);
-
-
-        \path[draw,->,shorten >=5pt] (curr1_app1.189) -| (appup_generator.south east);
-        \path[draw,->,shorten >=5pt] (curr1_app2.189) -| (appup_generator.south east);
-
-        \path[draw,->] (appup_generator.south) |- (relup);
-
-        \begin{pgfonlayer}{background}
-          \node [draw=black!50, fit={
-            (prev1_box) (curr1_box)
-          }, fill=white, double copy shadow={shadow xshift=-4pt,
-          shadow yshift=4pt, fill=white, draw}] (generation) {};
-        \end{pgfonlayer}
-
-      \end{tikzpicture}
-    }{
-      \caption{
-        \acrfull{relup} generation.}\label{fig:relup_gen}
-    }
-  \end{subfloatrow}
-  \vspace{6pt}
-  \begin{center}
-    $(\star)$ denotes new files.
-
-    $\lambda$ is the appup generator.
-  \end{center}
-  \vspace{20pt}
-  \begin{subfloatrow}
-    \ffigbox[\textwidth]{
-      \setlength{\tabcolsep}{2pt}
-      \renewcommand{\arraystretch}{1.3}
-      \begin{tabular}{ r r c r r }
-        $p[a]$: & $w\;\Leftrightarrow\;{}x$ &
-          \multirow{4}{*}{
-            \hspace{10pt}
-            \large{$\rightarrow$}
-            \hspace{10pt}
-          }& \\
-        $q[a]$: & $g\;\Leftrightarrow\;{}x$ & &
-          $a$: & $(w|g)\;\Leftrightarrow\;{}x$ \\
-        $p[b]$: & $y\;\Leftrightarrow\;{}z$ & &
-          $b$: & $(y|h)\;\Leftrightarrow\;{}z$ \\
-        $q[b]$: & $h\;\Leftrightarrow\;{}z$ & & \\
-      \end{tabular}
-    }{\caption{Combination of upgrade instructions.}\label{fig:instruction_merge}}
-  \end{subfloatrow}
-  \vspace{10pt} \\
-}{\caption{Generating upgrade instructions.}}
-
-\cleardoublepage
-\subsubsection{Release Upgrade Instructions} Erlang/\acrshort{otp} ships with the \acrfull{sasl} application that includes a function to assemble multiple high-level \acrfull{appup} files into a single low-level \acrfull{relup} file. Additionally, \lstinline|rebar3| wraps the \acrshort{relup} assembler in a convenience command that takes care to correctly set up the environment before invoking the generator. While the bare \acrshort{relup} generator handles multiple previous releases directly, the wrapper provided by \lstinline|rebar3| is in fact another wrapper over \lstinline|relx|, which finally calls \acrshort{sasl}. At one point in this chain, the ability to handle multiple previous releases is lost, so the tool has to engage a similar technique as the one used for generating \acrshort{appup}s. For each previous release, the current project is cloned, because in addition to the \acrshort{appup} files, the \acrshort{relup} generator also needs access to the previous release resource file and expects previous versions of the applications inside the application directory of the current release, so the previous applications are copied to the clone of the current project. The \acrshort{relup} generator is invoked to produce a \lstinline|relup| file inside the clone of the current project. Note that in contrast to \acrshort{appup} generation, which produces one instructions file for each application contained within the release, this time the application's \acrshort{appup}s are combined into a single \acrshort{relup} file as depicted in figure~\ref{fig:relup_gen}. Note that each run of the \acrshort{relup} generator must happen between exactly two releases, and that one \acrshort{relup} file is generated for each previous release, containing only the instructions to upgrade from that specific previous releasae. The resulting \acrshort{relup}s are again collected and the temporary clones are deleted. The \acrshort{relup} files have almost the same structure as the \acrshort{appup} files, so the collected instructions can be merged in the same way. The resulting single \acrshort{relup} file that now knows how to upgrade from any previous release to the current release is output to the primary working copy of the current project.
-
-\paragraph{Packaging and storing the release.} With a final, merged \acrshort{relup} file in place, the release is ready to be packaged as a gzip-compressed tarball (\lstinline|*.tar.gz|), which contains everything needed to start a \emph{target system} from scratch, or to hot upgrade a node running any of the versions of any branches that were present in the store when the build process was started. The resulting tarball artifact is sent to one of the builder's store backends: local or remote. The local backend saves the artifact to the host's file system and is meant for testing. The recommended backend to use is the remote one, which uploads the release artifact to a central store.
-
-\cleardoublepage
-\subsection{Store}
-
-The store is a minimal \acrshort{http} server that stores release artifacts. It handles uploading and downloading of versioned artifacts, and differentiates multiple projects and machine architectures. It is implemented in Erlang on top of the \emph{Cowboy} \acrshort{http} server application. The store interface comprises just four functions: \lstinline|put| for uploading, \lstinline|get| for downloading, \lstinline|versions| for querying the stored versions and branches of a project, and \lstinline|delete| for purging artifacts. The \acrshort{http} \acrfull{api} aims to follow a \acrfull{rest} architecture. There are two resources provided, one mapping to release tarballs (figures~\ref{fig:api_singlea},~\ref{fig:api_singleb}) that handles uploading, downloading and purging; and one mapping to the notion of a project to allow querying the stored versions and the branches to which the versions belong (figure~\ref{fig:api_list}).
-
-Both resources expect the \acrshort{http} Basic Authentification header, and validate the given credentials against a configurable value. Metadata is returned in binary encoded \acrfull{etf}. Release artifacts are currently stored on the store server's file system.
-
-\ffigbox[\textwidth]{
-  \vspace{25pt}
-  \begin{subfloatrow}
-    \ffigbox[\textwidth]{
-      \vspace{13pt}
-      \setstackgap{S}{6pt}
-      $\langle$ \stackanchor{\lstinline|GET|}{\lstinline|POST|} $\rangle$
-      \hspace{0.3em}
-      \lstinline|/|$\langle$\emph{project name}$\rangle$\lstinline|/|release\lstinline|/|$\langle$\emph{architecture}$\rangle$\lstinline|/|$\langle$\emph{branch}$\rangle$\lstinline|/|$\langle$\emph{version}$\rangle$
-      \vspace{8pt}
-
-      Content Type: \lstinline|application/gzip|
-
-    }{\caption{Downloading or uploading a single artifact.}\label{fig:api_singlea}}
-  \end{subfloatrow}
-  \vspace{35pt} \\
-  \begin{subfloatrow}
-    \ffigbox[\textwidth]{
-      \vspace{13pt}
-      \lstinline|DELETE|
-      \hspace{0.3em}
-      \lstinline|/|$\langle$\emph{project name}$\rangle$\lstinline|/|release\lstinline|/|$\langle$\emph{architecture}$\rangle$\lstinline|/|$\langle$\emph{branch}$\rangle$\lstinline|/|$\langle$\emph{version}$\rangle$
-      \vspace{8pt}
-    }{\caption{Purging a single artifact.}\label{fig:api_singleb}}
-  \end{subfloatrow}
-  \vspace{35pt} \\
-  \begin{subfloatrow}
-    \ffigbox[\textwidth]{
-      \lstinline|GET|
-      \hspace{0.3em}
-      \lstinline|/|$\langle$\emph{project name}$\rangle$\lstinline|/|release\lstinline|/|$\langle$\emph{architecture}$\rangle$
-
-      \vspace{8pt}
-
-      Content Type: \lstinline|application/erlang|
-
-      \acrfull{etf}
-
-    }{\caption{Querying available versions and branches.}\label{fig:api_list}}
-  \end{subfloatrow}
-  \vspace{25pt} \\
-}{\caption{\acrshort{rest} \acrshort{api} of the store component.}}
+\subsection{Synchronized Rollback}
+When hot upgrading a distributed system, it is often desirable to minimize the time where different versions of the code are in concurrent use.

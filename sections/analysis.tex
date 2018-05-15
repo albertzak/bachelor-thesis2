@@ -14,7 +14,7 @@ This is the most severe class of issues, as they may prevent any Release Upgrade
 By default, an Erlang process expecting a particular message blocks forever until it successfully pattern matches on the received term. Recall that the \acrshort{beam} can keep up to two versions of a module loaded in memory at once. Any processes running the oldest version while a third newer one is loaded are killed because the oldest module is purged from memory. In the case of Release Upgrades, either some processes' state is lost or the upgrade will not be applied. Using the default process purge strategy \lstinline|brutal_purge|, old processes are killed; while \lstinline|soft_purge| aborts the upgrade if any processes are running old code.
 
 \paragraph{No fully qualified calls.}
-Resident modules –- i.e.~those that have processes running a tail-recursive loop –– must handle the \lstinline|change_code| system message themselves and upon receipt perform a fully-qualified call. Alternatively, if it is known beforehand that no state upgrade will be needed, it is sufficient to continuously perform fully qualified calls within at least the upgrade timeout, which defaults to five seconds.
+Resident modules –- i.e.~those that have processes running a tail-recursive loop –– must handle the \lstinline|change_code| system message themselves and upon receipt perform a fully-qualified call (prepend the module name with a colon, \lstinline|module:function()|). Alternatively, if it is known beforehand that no state upgrade will be needed, it is sufficient to continuously perform fully qualified calls within at least the upgrade timeout, which defaults to five seconds.
 
 \paragraph{Anonymous functions.}
 Processes can pass anonymous functions to other processes running even on different nodes. Despite their unimpeded freedom of movement, anonymous functions are tied to the exact version of the module they were defined in. This fact is not obvious to the developer, and has unfortunate consequences when the module that defined the function gets purged. Process $A$ puts an anonymous function defined in module $A_1$ into process $B$'s mailbox. As part of an upgrade, module $A_1$ is replaced by module $A_2$, and process $A$ is given a chance to upgrade its state. After the old module $A_1$ is purged from memory, as soon as process $B$ attempts to execute the received function, it will exit with reason \lstinline|badfun|. While~\cite{davis:talk} stated that the receiving process does not even have to execute the function to cause the issue; testing with Erlang/OTP 20 showed that the process only exits when it attempts to execute the function, but can parse the rest of the message just fine.
@@ -24,11 +24,7 @@ When designing \acrshort{api}s,~\cite{davis:talk} recommends to take an \lstinli
 
 \paragraph{Required OTP dependencies.}
 In order to unpack and install a Release Upgrade on a target system, the \lstinline|release_handler| module needs to be available and loaded on the node. This module is part of the \acrfull{sasl} application which needs to be explicitly listed as a dependency of the initial release. Most third party release assembly tools print a warning if the SASL application is not included when building a release package.
-
-
-
 The build tool described in~\cite{zak18} silently adds a dependency on the SASL application before building the project, and ensures the \acrshort{erts} is included in the release package.
-
 The target system also needs to be started with heartbeat monitoring in order to properly handle upgrade instructions that require the node to perform a restart.~\cite{doc:otp}
 
 \subsection{Issues Caused by New Code}
@@ -49,7 +45,8 @@ The problem is exacerbated when record definitions are made public via Erlang he
 
 
 \paragraph{Non-upgradeable applications.}
-Additionally,
+Some applications do not need to be upgraded using \acrshort{dsu}
+
 
 
 \paragraph{Rollbacks.} If a code change callback throws or returns an error, or if any other functions called as part of the upgrade process fail, the node will simply reboot using the old versions of the applications.
@@ -65,6 +62,11 @@ Installation of Release Upgrades is a sequential process. Modules are loaded, an
 \paragraph{Appup generation.}
 %
 
+\paragraph{One-off tasks in Elixir.}
+Production systems sometimes need to run administrative commands to perform tasks such as database migrations. It is possible to manually trigger them by attaching a shell to the production node, but most tools that expect an Elixir project folder cannot work with OTP releases. There is a difference between the folder structure of Elixir projects in development when using the default \lstinline|mix| build tool compared to a compiled OTP release. Additionally, the default Elixir configuration file \lstinline|config.exs| is evaluated at release assembly time and converted to Erlang configuration. Yet, some plugins for \lstinline|mix| expect an Elixir project structure or Elixir configuration even in production deployments. For example, database migrations in Elixir using Ecto are usually performed via a \lstinline|mix| task, which is not available inside releases. Developers of Elixir projects wishing to take advantage of the proposed deployment architecture need to take care to set up e.g.~migrations to run automatically. In the future, \lstinline|mix| will likely move towards a folder structure resembling releases in development, which will ease interoperability of administrative tasks.~\cite{mix_releases}
+
+
+
 \subsection{Other Considerations}
 
 \paragraph{Version numbers.}
@@ -75,5 +77,7 @@ Each application that is part of a release must define a version string inside i
 There is a dedicated upgrade instruction to change the parameters of a callback module implementing the supervisor behaviour, but any changes only apply to newly spawned children of that supervisor. If required, existing child processes must be modified with a custom function call given via an \lstinline|apply| instruction.
 
 \paragraph{Native dependencies.}
+Erlang programs may communicate with other native software via e.g.~ports. When such programs are packaged as part of a release, Erlang code can retrieve their path via \lstinline|code:priv_dir(App)|. If the native program needs to be changed as part of an upgrade, the \lstinline|code_change| callback needs to extract state from the external program, close the port, manually upgrade the native binary, and then reopen the port, without special support from \acrshort{otp}.
 
-\paragraph{Administrative tasks.}
+\paragraph{Partial \acrshort{dsu}.}
+Different parts of a system may have varying uptime requirements. Some applications, for example libraries or non-critical applications, may not need to be upgraded using \acrshort{dsu}. Rather it is acceptable if they are simply restarted to the new version via the \lstinline|restart_application| instruction. Loosening the requirement to perform \acrshort{dsu} only on the most critical parts of the system can make the overall upgrade process more stable.
