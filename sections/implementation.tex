@@ -27,20 +27,21 @@ The contribution of this work is an extension to the tool \emph{BeamUp}~\cite{za
   \caption{Architecture outline.}\label{fig:impl}
 \end{figure}
 
-The following subsections explain the changes made to the release store and \acrshort{cli} tool, the bootstrapping process, how the node agent is implemented, and how the agent interacts with the operational node.
+The following subsections explain the changes made to the release store and \acrshort{cli} tool, the bootstrapping process, various implementation details of the node agent, and how the agent interacts with the operational node.
 
 \subsection{Store}
 
+The store is a simple Erlang \acrshort{http} server to keep track of binary release packages for multiple projects. It accepts authenticated uploads from build tools, and provides endpoints to query and download available versions. The changes to the release store described in~\cite{zak18} are minimal. In addition to a new endpoint for nodes to subscribe to release channels, a project can now have multiple releases built from the same codebase.
 
 \paragraph{Release name.}
 OTP has no notion of a project; the most coarse level of organization is a Release, which is given a name. Multiple distinct Releases comprising different Applications may be generated from a single codebase, each bearing a unique name. For example, individual nodes in a distributed setup may run separate Releases with distinct configurations. The build tool described in~\cite{zak18} ignored this fact and generated only one release, always picking the name of the containing folder (the project name) as the name for the release. An artifact was identified by the combination of project name, release version, machine architecture, and git branch. All \acrshort{api}s now additionally take into consideration the release name, defaulting to the project name if left unspecified.
 
-\paragraph{Notifications.} The store now provides an additional endpoint through which nodes can subscribe to be notified when new artifacts are available. The notification system is based on the \acrfull{sse} standard, with the payload message encoded in \acrfull{etf}. Decoding the update notification yields a tagged tuple containing the just latest version string. The new binary release package needs to be fetched separately via the existing single artifact \acrshort{http} GET endpoint.
+\paragraph{Notifications.} The store also provides an additional endpoint through which nodes can subscribe to be notified when new artifacts are available. The notification system is based on the \acrfull{sse} standard, with the payload message encoded in \acrfull{etf}. Decoding the update notification yields a tagged tuple containing the just latest version string. The new binary release package needs to be fetched separately via the existing single artifact \acrshort{http} GET endpoint.
 
 \input{sections/fig_store_api}
 
 \subsection{Bootstrapping}
-The invocation of the \acrshort{cli} tool to start a node running the latest version of a particular project is given in Listing~\ref{lst:node}. The node is pointed at the release store via environment variables, optionally supplying a shared authentication token, and is told what project and optionally what release name to run. Note that this command only needs to be run once, except after a reboot of the host. The node subscribes to the store to be notified of new versions, and downloads and applies them without user interaction.
+The invocation of the \acrshort{cli} tool to start a node running the latest version of a particular project is given in Listing~\ref{lst:node}. The node is pointed at the release store via environment variables, optionally supplying a shared authentication token, and is told what project and optionally what release name to run. Note that this command only needs to be run once after a reboot of the host, but requires no interaction to deploy upgrades. The node subscribes to the store to be notified of new versions, and downloads and applies them via \acrshort{dsu}.
 
 \begin{lstlisting}[
   label={lst:node},
@@ -50,6 +51,13 @@ BEAMUP_NODE_PROJECT_NAME=mychat \
 BEAMUP_STORE=https://store.example.com \
 beamup node
 \end{lstlisting}
+
+The node agent maintains two persistent directories which are mapped to the host file system: \begin{enumerate}[label=(\roman*)]
+  \item a local cache of release package tarballs in \lstinline[breaklines=true]|~/.beamup/node/releases|,
+  \item and one operating directory containing the current target system in \lstinline[breaklines=true]|~/.beamup/node/active/|
+  $\langle$project name$\rangle$\lstinline|/|$\langle$release name$\rangle$\lstinline|/|.
+\end{enumerate}
+
 
 \paragraph{Transparent container invocation.}
 All \lstinline|beamup| \acrshort{cli} commands are either executed directly on the host, or, if possible, passed into a newly started container where they run in a well-defined environment. If it is not possible to start containers –– which is the case if the tool is being started inside an already-running container –– then it must assume that the \acrshort{erts} is  set up correctly on the machine. This is why the tool prefers to pass execution into a well-known container, where the same command is then ran again. Once inside, the tool can safely proceed under the assumption that the environment is correct.~\cite{zak18}
@@ -65,19 +73,23 @@ For production deployments, it is thus recommended to start the provided general
 
 When the container is started, the same node command is invoked inside. Note that the version of Erlang/OTP which ships with the image is only relevant to the node agent, because the operating node will use the version of the \acrshort{erts} bundled with the release package, and the two \acrshort{beam}s running inside a node share nothing.
 
-\paragraph{Environment variables}
-% Table
+\paragraph{Agent environment variables.}
 
-\paragraph{Node identification}
-% Cookie, Node name
+The node agent takes its configuration via \acrshort{os} environment variables, as listed in Table~\ref{table:env_vars}. Note that it is not possible to pin the node to any one release version, as the node selects the latest available version for underlying machine architecture from the store, and continuously upgrades to any newer versions that are pushed to the store. It is also not necessary to specify the versions of Erlang or Elixir to load. The node will boot the release using the \acrshort{erts} which is part of the release package, with its version fixed at build time.
+
+Note that the possibilities to configure the node agent are deliberately kept to a minimum. Changing \acrshort{os} environment variables from the outside is impossible while the node is running. The accepted tradeoff is that this style of passing configuration is simpler than depending on the file system for watching and parsing configuration files. Ideally, a node would require only a single immutable identifier to be assigned at first boot. The node agent would then pull all configuration from a central fleet manager, and possibly subscribe to be notified of configuration changes.
+
+\input{sections/table_env_vars}
+
+
+
+\paragraph{Operational node configuration.}
+The agent generally attempts to be unopinionated about the ways to provide configuration to the operational node. Yet, the agent tries to hide the fact that the operating directory is not meant to be mutated by anyone else from the time the release package is generated to when the target system is started. The implication is that most custom configuration would either need to be baked into the release package at build time, or be pulled in from an external configuration provider at runtime. Still, there is no obvious way to differentiate deployments of the same package on separate nodes.
+
+When nodes want to communicate using the Erlang distribution protocol, each node needs to \begin{enumerate*}[label=(\roman*)] \item be started with a unique name, and \item be configured with the same shared authentication cookie string.\end{enumerate*} The proposed node agent provides a mechanism that allows these two configuration parameters, usually defined in files shipped as part of the release package, to be overwritten via environment variables.
 
 
 \subsection{Release Packages}
-
-The node agent maintains two persistent directories which are mapped to the host file system: \begin{enumerate}[label=(\roman*)]
-  \item a local cache of release package tarballs in \lstinline[breaklines=true]|~/.beamup/node/releases|,
-  \item and one operating directory containing the current target system in \lstinline[breaklines=true]|~/.beamup/node/active|.
-\end{enumerate}
 
 On startup, the agent attempts to start a node from the operating directory. In case of a first run, or when there is no valid release found inside the operating directory, the supervising process yields. If an operational node can be started, the agent does not yet care what version it is running.
 
@@ -92,7 +104,6 @@ If there is no latest version of the requested artifact present in the remote st
 When unpacking a release, the agent must take care to use the correct method: If the operating directory contains a valid target system, the agent must call the release handler of the operational node to properly unpack the new release on top of the currently running one. This is important because the \lstinline|RELEASES| file in the operating directory contains metadata about all of the releases that are currently available to the node. Yet the release package which is to be extracted on top of the operating folder contains another \lstinline|RELEASES| file, which may not overwrite the existing one. Their contents must be properly merged by the release handler, as the new release will be marked as ``unpacked, but not yet installed'', and the old release metadata must remain inside this file. The release handler also performs some sanity checks for missing files on the release package before extracting. On the other hand, if there is no target system available in the operating folder, the package is simply unpacked using \lstinline|tar|.
 
 \subsection{Node Agent}
-
 The node agent is responsible for starting and upgrading the operational node. It runs on a separate instance of the \acrshort{beam} side by side to the operational node, and is designed to be minimally intrusive. Communication only happens via the target system's exposed convenience scripts inside its \lstinline|bin| directory. When a release is to be upgraded, for example, the node agent spawns another OS-level process of the system's shell, calling the \lstinline|bin/upgrade| script with the required parameters, and waiting for it to terminate. This
 degree of separation may appear inefficient, as the node agent could just join the operational node using a hidden shell and directly interact with the release handler. Yet, by only assuming the existence of the informal \acrshort{api} exposed by the scripts in \lstinline|bin|, whatever tool used to assemble the release can define exactly how the upgrade should take place.
 
@@ -102,7 +113,7 @@ The node agent does not listen on any ports, and does not attempt to join other 
 
 
 \paragraph{Attaching a shell.}
-To perform tracing on a live system, administrators can attach a shell to either the node agent or
+To perform tracing on a live system, administrators can attach a shell to the operational node using the convenience command \lstinline|beamup node attach|. 
 
 
 \subsection{Release Upgrades}

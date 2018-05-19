@@ -1,42 +1,32 @@
 \begin{table}[h]
   \setlength{\tabcolsep}{10pt}
+  \setlength\extrarowheight{5pt}
   \centering
-  \begin{tabularx}{\textwidth}{l X X}
-    Host & Launcher & Container entrypoint \\
+  \begin{tabularx}{\textwidth}{l X r}
+    Variable & Description & Req. \\
     \hhline{===}
-    $\langle$\emph{Working directory}$\rangle$ &
-      Passed as \lstinline|PROJECT_DIR| \newline
-      either as-is or with container path of mount point &
-      Passed through \\
+
+    \lstinline|NODE_PROJECT_NAME| & The name of the containing folder the project was built in & \Checkmark{} \\
     \hline
-    \lstinline|ERLANG_VERSION| &
-      Used to determine \newline
-      image identifier &
-      Validated against \newline
-      currently installed version \\
+
+    \lstinline|NODE_RELEASE_NAME| & For projects built as multiple releases with different configurations. Defaults to the value of \lstinline|NODE_PROJECT_NAME| & \\
     \hline
-    \lstinline|ELIXIR_VERSION| &
-      Passed through &
-      Used to validate and/or \newline
-      install Elixir \\
+
+    \lstinline|NODE_NAME| & Unique name for this node when running in a distributed setup. Defaults to project name and release name. & \\
     \hline
-    --- &
-      \lstinline|TERM| set to \lstinline|dumb| &
-      Passed through \\
+
+    \lstinline|NODE_COOKIE| & Shared authentication string to join a distributed setup. & \\
     \hline
-    --- &
-      Contents read from global gitignore
-      file and passed on as \lstinline|GLOBAL_GITIGNORE| &
-      Contents written to \newline
-      container's global \newline
-      \emph{gitignore} file \\
+
+    \lstinline|STORE| & \acrshort{http} \acrshort{url} of the release store & \Checkmark{} \\
     \hline
-    \lstinline|STORE| & Passed through & Passed through \\
+
+    \lstinline|STORE_SECRET| & Authentication token for the store & \\
     \hline
-    \lstinline|STORE_SECRET| & Passed through & Passed through \\
+
+    \lstinline|DEBUG| & Enable verbose output of the node agent. This variable is also passed through to operational node & \\
     \hline
-    \lstinline|DEBUG| & Passed through & Passed through \\
-    \hline
+  
   \end{tabularx}
-  \caption{Transformation of environment variables between host and container.}\label{table:envvars}
+  \caption{Node environment variables.}\label{table:env_vars}
 \end{table}
