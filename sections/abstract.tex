@@ -2,22 +2,8 @@
 
 \section*{Abstract}
 
-Highly available Erlang/\acrshort{otp} systems wishing to take advantage of \acrfull{dsu} require a manual deployment process that is at odds with the practice of \acrlong{cd}.
+Highly available Erlang/\acrshort{otp} systems taking advantage of \acrfull{dsu} require a manual deployment process that is at odds with the practice of \acrlong{cd}. Previous work on automating Erlang/OTP release handling produced tools with imperative semantics that relied on pushing commands via remote shells.
 
-Previous work on automating Erlang/OTP release handling relied on push-based, imperative semantics
+This thesis presents a declarative deployment pipeline capable of \acrshort{dsu} that requires minimal configuration to bootstrap a node. An agent running on a separate emulator subscribes to a central release store, pulls artifacts, and installs them without user interaction. The initial deployment primitive is a generic container into which the node agent pulls new releases during runtime. By treating containers as mutable, the proposed solution combines the \acrshort{dsu} facilities of Erlang/OTP with the ease of deploying containers using existing orchestration tools.
 
-deployment with imperative semantics.
-
-odern tooling expecting immutable containers.
-
-This thesis presents a way to bootstrap nodes, requiring only minimal configuration,
-
-pull-based node bootstrapping
-
-revious work on automating Erlang/\acrshort{otp} Release generation has addressed parts of the process by abstracting the low-level mechanics of the build step, but tasks such as versioning and handling artifacts were left to the developer.
-
-This thesis presents a release generation tool designed for hands-off operation as part of a Continuous Integration pipeline.
-
-Tight coupling with Git allows reliable identification of releases by discarding numeric versions in favor of commit hashes, and a centralized release store takes care of handling artifacts.
-
-Evaluation of a reference implementation on six hosted Continuous Integration providers (\emph{CircleCI, Codeship, Semaphore, Shippable, Travis CI,} and \emph{Wercker}) demonstrates comparable run time and ease of setup.
+Evaluating \acrshort{dsu} failure scenarios reveals various sources of possible issues, some of which may be caught through static analysis, and some requiring more research before \acrshort{dsu} can safely be used for general purpose applications.
