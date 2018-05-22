@@ -16,9 +16,8 @@ Further research into upgrade safeness properties of Erlang/OTP systems is neede
 \cleardoublepage
 \section{Conclusion}
 
-This work has shown how the manual steps of deploying and upgrading an Erlang/\acrshort{otp} node can be automated. The contribution is an extension to the \acrshort{cli} tool \emph{BeamUp} to set up an Erlang node with one command that subscribes to a central release store and continuously pulls and deploys \acrshort{otp} Releases using \acrshort{dsu}.
+This work has shown how the manual steps of deploying and upgrading an Erlang/\acrshort{otp} node can be automated. The contribution is an extension to the \acrshort{cli} tool \emph{BeamUp} to set up an Erlang node with one command that subscribes to a central release store and continuously pulls and deploys \acrshort{otp} Releases via \acrshort{dsu}.
 
+Testing and evaluation of the prototype implementation has revealed many potential sources of errors that complicate many areas of service delivery. Some of these issues may be solved by developing more advanced tooling and stronger runtime support.
 
-
-
-To provide a clean and reproducible build environment, the tool transparently compiles the project inside a container. An evaluation has demonstrated that the tool works correctly and with comparable performance on major hosted \acrshort{ci} platforms.
+Unless the problem domain requires lots of in-memory state, e.g.~in a game server; or the system maintains persistent connections that cannot easily be drained, e.g.~a routing middleware, adding \acrshort{dsu} capabilities to a system must be thoroughly weighted against the additional complexity in development, deployment, and operations.

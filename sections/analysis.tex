@@ -1,10 +1,6 @@
 \cleardoublepage
 \section{Failure Analysis}
 
-
-\subsection{Test Setup}
-
-
 \subsection{Issues Caused by Old Code}
 % TODO Map to Hick's "Assumptions"
 
@@ -46,10 +42,7 @@ The problem is exacerbated when record definitions are made public via Erlang he
 \paragraph{Emulator version upgrades.} It is possible to update the version of the \acrfull{erts} or any of the core applications (kernel, stdlib, or sasl) as part of a Release Upgrade. However, this is not a \acrshort{dsu} action. When the release handler encounters the \lstinline|restart_new_emulator| instruction, it shuts down the currently running node and starts the new version of the \acrshort{erts} including the new core applications. This new emulator still runs the old versions of the previous releases' other applications. Finally, the release handler performs the rest of the upgrade instructions on the new node to upgrade the applications. There is also a \lstinline|restart_emulator| instruction that skips the second step of upgrading applications and instead boots the new emulator with all applications at their latest versions.
 
 \paragraph{Other dependencies.}
-Some additional applications cannot be upgraded using \acrshort{dsu}, e.g.~those compiled to native code using \acrshort{hipe}.
-
-thus have to force a reboot of the emulator as well.
-
+Some additional applications cannot be upgraded using \acrshort{dsu}, e.g.~those compiled to native code using \acrshort{hipe}. Such applications come with an appup file that does not contain any instructions. When the release handler attempts to compile this appup file into a relup file, it fails.~\cite{doc:otp}~states that the only way to force an upgrade of such applications is to write the \acrshort{relup} file by hand and include the \lstinline|restart_emulator| instruction.
 
 
 \paragraph{Rollbacks.} If a code change callback throws or returns an error, or if any other functions called as part of the upgrade process fail, the node will simply reboot using the old versions of the applications. The release handler has no special provision for the case when a single node fails to successfully apply the upgrade and reboots with its old applications, leaving the system running nodes with different versions.

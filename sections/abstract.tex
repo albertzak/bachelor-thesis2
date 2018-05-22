@@ -6,4 +6,4 @@ Highly available Erlang/\acrshort{otp} systems taking advantage of \acrfull{dsu}
 
 This thesis presents a declarative deployment pipeline capable of \acrshort{dsu} that requires minimal configuration to bootstrap a node. An agent running on a separate emulator subscribes to a central release store, pulls artifacts, and installs them without user interaction. The initial deployment primitive is a generic container into which the node agent pulls new releases during runtime. By treating containers as mutable, the proposed solution combines the \acrshort{dsu} facilities of Erlang/OTP with the ease of deploying containers using existing orchestration tools.
 
-Evaluating \acrshort{dsu} failure scenarios reveals various sources of possible issues, some of which may be caught through static analysis, and some requiring more research before \acrshort{dsu} can safely be used for general purpose applications.
+An evaluation of \acrshort{dsu} failure scenarios reveals various sources of possible issues, some of which may be caught through static analysis, and some requiring more research before \acrshort{dsu} can safely be used for general purpose Erlang/OTP systems.

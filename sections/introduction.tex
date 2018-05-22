@@ -1,9 +1,11 @@
 \section{Introduction}
 
-The contributions of this work are \begin{enumerate*}[label=(\roman*)]
-  \item an extension to the pipeline described in~\cite{zak18} to bootstrap an Erlang/\acrshort{otp} (\emph{\acrlong{otp}}) node with a single command. The node consists of an agent and an operational node running as separate processes in a container. The agent continuously pulls OTP Release packages from a central store and deploys them without user interaction.
-  \item An analysis of possible failure modes and root causes that may prevent an Erlang release upgrade from being applied successfully via \acrfull{dsu}.
-\end{enumerate*} This section explains relevant terminology and shows where manual interaction is required to deploy \acrshort{otp} Releases.
+The contribution of this work consists of two parts. \begin{enumerate*}[label=(\roman*)]
+  \item First, an extension to the pipeline described in~\cite{zak18} to bootstrap an Erlang/\acrshort{otp} (\emph{\acrlong{otp}}) node with a single command. The node consists of an agent and an operational node running as separate processes inside a container. The agent continuously pulls release packages from a central store and deploys them without user interaction.
+  \item Second, an analysis of possible failure modes and root causes that may prevent an Erlang release upgrade from being applied successfully via \acrfull{dsu}.
+\end{enumerate*}
+
+This section explains relevant Erlang terminology and shows where manual interaction is required to deploy \acrshort{otp} Releases.
 
 \subsection{Erlang/OTP}
 
@@ -13,82 +15,48 @@ Erlang is a programming language for building concurrent, distributed systems wi
 
 The language is often described as functional, although it is not strictly side effect free or referentially transparent. Erlang compiles to bytecode, which is executed by a \acrfull{vm}. The current Erlang \acrshort{vm} – the \emph{\acrshort{beam}}, short for \emph{\acrlong{beam}} – is written in C and supports various machine architectures. Multiple languages that compile to \acrshort{beam} bytecode have been created, most famously \emph{Elixir} and \emph{Lisp Flavored Erlang}. Actor model processes are the language's concurrency primitives: Functions can be spawned to create lightweight \acrshort{beam} processes. They are different from \acrfull{os} processes or threads, being preemptively scheduled by the \acrshort{beam}. Erlang/\acrshort{otp} systems commonly ``run millions of processes simultaneously [with each one taking] less than a kilobyte of space.''~\cite{larson}
 
-\paragraph{\acrshort{otp} Applications.}
-Erlang code is constructed out of functions defined within \mbox{\emph{module}} files bearing an \lstinline|*.erl| extension. \emph{\acrshort{otp} Applications} group related modules into reusable units to provide well-defined start and stop semantics, including an \emph{application resource file} (\lstinline|*.app|) containing additional metadata such as a version string and a list of other applications that this application depends on, and which need to be started beforehand. Every application has a dependency on at least \lstinline|kernel| and \lstinline|stdlib|, and both must be specified in the application resource file.~\cite{doc:otp}
+\cleardoublepage
+\paragraph{Structure.}
+Erlang code is constructed out of functions defined within \mbox{\emph{module}} files bearing an \lstinline|*.erl| extension. Modules compiled to \acrshort{beam} bytecode have a \lstinline|*.beam| extension. \emph{\acrshort{otp} Applications} group related modules into reusable units. \acrshort{otp} also enforces a certain directory structure for applications.~\cite{logan:otp} Whole projects consisting of multiple applications are packaged and deployed as \acrshort{otp} Releases. Various tools can be used to assemble the release into a single compressed tarball (\lstinline|*.tar.gz|) package.~\cite{doc:otp} A packaged release contains everything necessary to bootstrap an \emph{embedded target system} on another machine, also called a \emph{node}. Depending on the tool used to generate the release, it may include additional convenience scripts to upgrade or inspect the target system.
 
-\acrshort{otp} also enforces a certain directory structure for applications.~\cite{logan:otp}
+\paragraph{\acrlong{dsu}.} Highly available distributed systems are often realized using a rolling deployment model where nodes are upgraded one after another, with load balancers attempting to gently drain connections from old services and direct new connections to recently upgraded nodes. This may be undesirable for long-running sessions, or servers with lots of in-memory state. A core feature of Erlang is its support for \acrfull{dsu}, also referred to as on-the-fly upgrading, or hot code loading.
 
-\paragraph{\acrshort{otp} Releases.} Whole projects consisting of multiple applications are packaged and deployed as \acrshort{otp} Releases. They are described by a release resource (\lstinline|*.rel|) file, which specifies additional metadata, such as a version string for the entire release, the included version of the \emph{\acrlong{erts}} (\acrshort{erts}), and a list of applications with their respective version strings that comprise the release.
+The \acrshort{beam} keeps up to two versions of a module loaded in memory, and both versions of the code may run side by side.~\cite{cesarini:otp} Orchestrating changes to a running production system in a controlled way is done via a \acrfull{relup} file, which accompanies a release package and is compiled from multiple \acrfull{appup} files of each changed OTP Application part of the release.
 
-From this release resource file, various tools can be used to create a boot script and assemble the release into a single compressed tarball (\lstinline|*.tar.gz|) package.~\cite{doc:otp} A packaged release contains everything necessary to bootstrap an \emph{embedded target system} on another machine, also called a \emph{node}. Depending on the tool used to generate the release, it may include additional convenience scripts to upgrade or inspect the target system.
+A target system capable of \acrshort{dsu} must provide a release handler process. This process is part of the OTP \acrfull{sasl} Application and handles unpacking, installing, upgrading, and removing release packages from within a running node.
 
-\paragraph{\acrlong{dsu}.} Highly available distributed systems are often realized using a rolling deployment model where nodes are upgraded one after another, with load balancers attempting to gently drain connections from old services and direct new connections to recently upgraded nodes. A core feature of Erlang is its support for \acrfull{dsu}, also referred to as on-the-fly upgrading, or hot code loading. The \acrshort{beam} keeps up to two versions of a module loaded in memory, and both versions of the code may run side by side.~\cite{cesarini:otp} \acrshort{otp} provides generic \emph{behaviours} that \emph{callback modules} can implement to normalize start, stop and upgrade semantics, among others.~\cite{doc:otp} Erlang systems constructed according to \acrshort{otp} patterns, grouped into \acrshort{otp} Applications, and packaged as \acrshort{otp} Releases enjoy additional support for \acrshort{dsu} via instruction files: \emph{\acrshort{appup}s} (\emph{\acrlong{appup}}) and \emph{\acrshort{relup}s} (\emph{\acrlong{relup}}).
-
-First, there are high-level, often handwritten \acrfull{appup} files, one for each \acrshort{otp} Application. These files are fed into release generation tools where they are translated and combined into a single low-level \acrshort{relup} file, thus making a given release \acrshort{dsu}-capable.~\cite{doc:otp} The \acrshort{relup} file contains instructions on how to upgrade a node running a previous version. A single release package can include one \acrshort{relup} file which may know how to upgrade from multiple previous releases. These files also contain instructions on how to downgrade to the previous version in case the upgrade fails.~\cite{doc:otp}
-
+\cleardoublepage
 \subsection{Problem}\label{sec:problem}
 The deployment process of Erlang/OTP systems is at odds with modern \acrfull{cd} tooling when \acrshort{dsu} capabilities are required. A single build of a software is generally expected to be an immutable, self-contained unit of deployment which needs to be started, stopped, and replaced between each update. This is orthogonal to how Erlang/OTP approaches deployment: Nodes expect to run continuously and have access to a mutable directory where compiled modules packaged as OTP Releases can be swapped in and out as required during the lifetime of the system. Immutable, versioned containers are not fit as deployment primitives in a \acrshort{dsu} system.
 
 Additionally, OTP tooling expects operators to perform various manual steps to hot upgrade an Erlang target system. One needs to transfer the correct release package to the server, unpack it using one of two methods depending on whether it is the first release or an upgrade, attach a shell to the emulator and invoke various commands in the correct order and with the right arguments, including different version strings.
 This process is tedious and error-prone to perform manually, and impedes frequent deployment of small changes. Likewise, complex code changes are more likely to fail when applied via \acrshort{dsu}.~\cite{hicks} The unfortunate consequence is that developers are discouraged from using Erlang's \acrshort{dsu} capabilities unless absolutely necessary.~\cite{ferd} To take advantage of the various benefits of Continuous Delivery together with Erlang/OTP's \acrshort{dsu} capabilities, developers must first spend time automating these steps for each project.
 
-
+\cleardoublepage
 \subsection{Contribution}
 
-This work contributes design, implementation and evaluation of an extension to the build tool described in~\cite{zak18} for deploying Erlang/\acrshort{otp} Releases with support for \acrshort{dsu}. Its aim is to be a general purpose deployment pipeline that runs without user interaction and requires as little configuration as possible. Additionally, this work includes an analysis of \acrshort{dsu} failure modes and a critical discussion of the contribution.
+This work contributes design, implementation and evaluation of an extension to the build tool described in~\cite{zak18} for deploying Erlang/\acrshort{otp} Releases with support for \acrshort{dsu}. Its aim is to be a general purpose deployment pipeline that runs without user interaction and requires as little configuration as possible.
 
 \paragraph{Goal.} The goal is to develop a prototype implementation for bootstrapping an Erlang node with a single command. The node agent subscribes to the previously described release store to fetch release packages, download, extract, and deploy them; as well as apply \acrshort{dsu} instructions.
 
-\paragraph{Method.} The thesis describes the architectural and design decisions made while iteratively implementing said node agent. The prototype is then used to tests the boundaries of the \acrshort{dsu} process. Finally, the work discusses limitations and advantages of the implementation.
+\paragraph{Method.} The thesis describes the architectural and design decisions made while iteratively implementing said node agent. The prototype is then used to test and analyze the boundaries of the \acrshort{dsu} process. Additionally, this work includes a critical discussion of the contribution in regards to its advantages and limitations.
 
 \cleardoublepage
 \subsection{State of the Art}\label{sec:sota}
 
-The proposed tool, \emph{BeamUp}, relies on several layers of existing tooling, as visualized in Figure~\ref{fig:tools}. At the lowest level, Erlang/\acrshort{otp} ships with the \acrfull{sasl} that include the two basic building blocks for \acrshort{dsu} support: \lstinline|systools| provides low-level functions for \emph{offline} release generation, and \lstinline|release_handler| is used to perform an \emph{online} hot upgrade of a running node.~\cite{doc:otp}
-Elixir projects are built with \lstinline|mix| (not pictured) and releases are generated with \lstinline|distillery|~\cite{distillery}, which handles generation of upgrade instructions itself, and directly interacts with \lstinline|systools|. Erlang projects, however, need more coaxing: Modules and dependencies are compiled with \lstinline|rebar3|, \acrfull{appup} files are generated on a best-effort basis by comparing \acrshort{beam} bytecode via a plugin to \lstinline|rebar3|~\cite{rebar3appup}, while release assembly is done by another intermediary tool, \lstinline|relx|~\cite{loder2016production}.
+The seemingly modern idea of bootstrapping infrastructure was first thoroughly documented by~\cite{traugott1998bootstrapping}. More recently,~\cite{adams2016modern} provided a good overview of the state of the art in the practice of modern automated build and deployment models, commonly referred to as \acrfull{cd}. Most literature on CD focuses on immutable units of deployment without DSU capabilities; and only a fraction of deployment models advocate nodes pulling new releases instead of the traditional push model.
 
-\vspace{2cm}
-\begin{figure}[h]
-  \begin{tikzpicture}[sibling distance=40mm,
-    level distance=14mm,edge from parent,>=latex']
-    \tikzstyle{edge from parent}=[draw,<-]
-    \node (edeliver) at (0.9, 5) {\lstinline|edeliver|};
-    \node (beamup) at (-2, 6.5) {\lstinline|beamup|};
+Research by~\cite{wielgus2013erlang} produced a mechanism for nodes to pull Erlang releases via the OS package manager \lstinline|apt|, including support for \acrshort{dsu}.
 
-    \node {\lstinline|SASL|} [grow'=up] {
-      child {node {\lstinline|systools|}
-        child {node (relx) {\lstinline|relx|}
-          child {node (rebar3) {\lstinline|rebar3|}}}
-        child {node (distillery) {\lstinline|distillery|}}}
-      child {node (release_handler) [text=black!40] {\lstinline|release_handler|} edge from parent[draw=black!40]}
-    };
-
-    \node (appup) [left=10mm of rebar3,text centered,text width=13mm] {\lstinline|appup| \lstinline|plugin|};
-
-    \draw[->] (appup) -- (rebar3);
-
-    \draw[->] (edeliver) -- (distillery);
-    \draw[->] (edeliver) -- (relx);
-    \draw[->,draw=black!40] (edeliver) -- (release_handler);
-    \draw[->,draw=black!40] (distillery) -- (release_handler);
-
-    \draw[->] (beamup) -- (distillery);
-    \draw[->] (beamup) -- (rebar3);
-    \draw[->] (beamup) -- (appup);
-    \draw[->,dashed,draw=black!40] (beamup.east) .. controls (5,6) and (2.3,5) .. node[very near start,sloped,above,text=black!40] {\small{(planned)}} (release_handler.32);
-
-  \end{tikzpicture}
-  \caption{Dependencies between selected tools to create and handle releases.}\label{fig:tools}
-\end{figure}
+A different approach to release deployment relies on \emph{Nix}, a general purpose package manager borrowing ideas from functional programming: immutability, pure functions, and referential transparency.~\cite{nix1} Nix provides repeatable environments to build packages in.~\cite{erlangnix2}~presents a proof-of-concept research project to deploy Erlang/\acrshort{otp} projects using Nix, with no \acrshort{dsu} support.
 
 \cleardoublepage
 \section{Related Work}\label{sec:related_work}
 
 There have been several attempts to automate deployment of Erlang/\acrshort{otp} projects, including bootstrapping nodes and \acrshort{dsu} support.
 
-\emph{Edeliver}~\cite{edeliver,talk:edeliver} is a tool to generate and deploy OTP releases from Erlang and Elixir projects. It handles pushing artifacts and configuration to multiple production servers via \acrshort{ssh}, and supports \acrshort{dsu}. Written in bash, it has no additional dependencies. 
+\emph{Edeliver}~\cite{edeliver,talk:edeliver} is a widely used tool to generate and deploy OTP releases from Erlang and Elixir projects. It handles pushing artifacts and configuration to multiple production servers via \acrshort{ssh}, and supports \acrshort{dsu}. Written in bash, it has no additional dependencies.
 
+\emph{Bootleg}~\cite{bootleg} is a pure Elixir solution to automate build and deployment via \acrshort{ssh}. It provides special support for projects using the popular Elixir web framework Phoenix, and exposes various hooks to customize its behavior, but does not support \acrshort{dsu}.
 
-A different approach to release assembling relies on \emph{Nix}, a general purpose package manager borrowing ideas from functional programming: immutability, pure functions, and referential transparency.~\cite{nix1} Its artifacts are identified via cryptographic hashes of all inputs used to build them. Nix provides repeatable environments to build packages in, similar to what containers are used for in this work, but with stronger determinism. Nix forms the base of \emph{NixOS}~\cite{nixos}, a full featured Linux distribution where almost all components are controlled by Nix via symbolic links.
-
-Previous work by~\cite{erlangnix} allows dependencies of Erlang/\acrshort{otp} projects to be managed via Nix, relying on \cite{hex2nix} to provide Nix metadata, called \emph{Expressions}, for most of the Erlang and Elixir packages hosted on \lstinline|hex.pm|, the primary package repository of the Erlang/\acrshort{otp} ecosystem. Lastly,~\cite{erlangnix2}~presents a pipeline to deploy Erlang/\acrshort{otp} projects using Nix.
+\emph{Gigalixir}~\cite{gigalixir} is a fully featured \acrfull{paas} that offers hosting and deployment for Elixir projects in production, with support for \acrshort{dsu}, built on Kubernetes~\cite{bernstein2014containers}. They provide a \acrshort{cli} tool to attach a remote shell to the running node, and convenience commands to run database migrations and to set configuration.
